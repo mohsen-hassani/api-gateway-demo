@@ -47,134 +47,11 @@ Goal: in 14 days, understand Envoy and Envoy Gateway well enough to put a small 
 
 > Today is Day N of my Envoy plan: \[paste the day's section\]. Generate the files for this day on top of the current repo. Leave the items under "Your blanks" as TODO(mohsen) comments with a short hint, do not fill them. Give me the verification commands and expected results. Do not modify the services in /services.
 
-## Phase 1: Tech spec for the coding agent (hand this over as-is)
+## Phase 1: Tech spec for the coding agent
 
-### Purpose
+The full spec lives in [PHASE1_TECHNICAL_SPEC.md](PHASE1_TECHNICAL_SPEC.md). Hand that file to the coding agent as-is.
 
-Build a small, deliberately simple microservice system that will later sit behind Envoy. Apart from auth-service, which only creates user identities and issues tokens, the services contain NO authentication checks, rate limiting or routing logic; token verification, rate limiting and routing will all be added at the gateway later. Do not create any Envoy, gateway or ingress configuration.
-
-### Tech choices
-
-- Python 3.12, FastAPI, uvicorn. In-memory data only (no database).
-- One Docker image per service; one shared codebase pattern is fine.
-- Structured JSON logging to stdout (one line per request: method, path, status, duration, request id).
-- Configuration via environment variables only.
-
-* The frontend is the one exception to Python: plain HTML and vanilla JavaScript served by an nginx image.
-
-### Services
-
-| Service | Port | Exposure (later) | Purpose |
-| --- | --- | --- | --- |
-| blog-service | 8001 | Public, unprotected | Read blog posts |
-| newsletter-service | 8002 | Public, unprotected | Email unsubscribe |
-| auth-service | 8006 | Public: only /register and /login (JSON) | Register, log in, issues JWTs; swappable behind the auth contract |
-| frontend | 8080 | Public, served at / | One static page: blog, unsubscribe, orders, login and register |
-| orders-service | 8003 | Public, login required (valid token) | User's orders; has v1 and v2 for canary |
-| inventory-service | 8004 | Internal only | Stock levels, called by orders-service |
-| pricing-service | 8005 | Internal only | Prices, called only by inventory-service |
-
-Endpoints:
-
-- blog-service: `GET /posts` (list of 5 seeded posts), `GET /posts/{id}`.
-- newsletter-service: `GET /unsubscribe?token=...` and `POST /unsubscribe` with JSON `{"email": "..."}`. Returns a confirmation message.
-- orders-service: `GET /orders` returns the caller's orders, `POST /orders` creates one. The caller identity is read ONLY from headers `x-user-id` and `x-user-email` (the gateway will set these later). If missing, return 401 with a clear JSON error. For each order, it calls inventory-service `GET /stock/{sku}` and includes the stock info in the response. The response also echoes the caller's user\_id and user\_email so you can see which identity arrived.
-- inventory-service: `GET /stock/{sku}`; calls pricing-service `GET /price/{sku}` and returns stock plus price.
-- pricing-service: `GET /price/{sku}` returns a price.
-
-### auth-service and the auth contract
-
-The auth-service is the only component that knows about passwords. Keep it tiny and replaceable: the frontend, the gateway and the other services depend only on the contract below, never on how the auth-service is built. Any open source auth service can take its place if it honours the same contract, directly or through a thin adapter.
-
-**Endpoints (the only two it exposes)**
-
-- `POST /register` with JSON `{"email": "...", "password": "..."}`. Returns 201 with `{"id": "...", "email": "..."}`.
-- `POST /login` with the same JSON. Returns 200 with `{"access_token": "...", "token_type": "Bearer", "expires_in": 900}`.
-- Errors are always JSON `{"error": "<code>", "message": "..."}`: `invalid_input` (422, includes passwords under 8 characters), `email_taken` (409), `invalid_credentials` (401, the same answer for a wrong email or a wrong password).
-- Nothing else is served: no `/me`, no JWKS endpoint, no admin API, and FastAPI's `/docs`, `/redoc` and `/openapi.json` are turned off. `/healthz` and `/readyz` exist for probes only and are never routed through the gateway. Unlike the other services it has no `/debug/request` and no fault injection.
-
-**Token contract**
-
-- The access token is a JWT signed with RS256, with a `kid` in the header.
-- Claims: `iss` (env `JWT_ISSUER`, default `http://auth-service`), `aud` (env `JWT_AUDIENCE`, default `envoy-demo`), `sub` (the user id), `email`, `iat`, and `exp` (env `TOKEN_TTL_SECONDS`, default 900).
-- The gateway reads `sub` and `email` and passes them on as `x-user-id` and `x-user-email`. Those two claims are the only identity the rest of the system ever sees.
-
-**Key contract**
-
-- The gateway verifies tokens with the auth-service's public keys, delivered as a JWKS document out of band: a file for Docker Compose, a ConfigMap (`auth-jwks`) on Kubernetes. The auth-service does not serve it over HTTP.
-- The private key is read from the file at `JWT_PRIVATE_KEY_PATH`. `make keys` generates a dev key pair in `keys/` (git-ignored) plus the matching public `jwks.json`. If no key file is set, the service generates a key at startup and logs a warning; tokens then stop working after a restart.
-
-**Swapping it for another auth service**
-
-A replacement must offer the two endpoints with the same request and response shapes (or sit behind a thin adapter that does), issue tokens with the same claims, and publish a JWKS the gateway can load. Only the gateway's JWKS location changes (a local file or ConfigMap becomes a remote URL); the frontend and the other services do not change. `scripts/auth-contract-test.sh <base-url>` checks all of this against any implementation.
-
-**Implementation**
-
-FastAPI, in-memory users, bcrypt password hashing, PyJWT. Out of scope: refresh tokens, email verification, password reset, roles, social login.
-
-### Frontend
-
-One simple page, plain HTML and vanilla JavaScript (no framework, no build step), served by an nginx image. The gateway serves it at `/`, so the page and the API share one origin and CORS never comes up. It only ever talks to the gateway's base URL (set in `config.js`), never to a service directly.
-
-- Panels: Blog (`GET /blog/posts`, public), Newsletter (unsubscribe form, public), Orders (`GET` and `POST /api/orders`, login required).
-- When any request returns 401, the page shows a login and register form instead of the panel. The form sends JSON to `POST /auth/register` and `POST /auth/login`. After a successful login it keeps the token in `sessionStorage` and retries the original request with `Authorization: Bearer <token>`. A logout button clears the token; an expired token gives a 401 and the form appears again.
-- A friendly message on 429 (rate limited).
-- A small debug panel shows the last request, its status and the response headers, so transformations, `x-service-version` and 429s are visible live.
-- No auth logic beyond handling 401 and attaching the token.
-
-### Common endpoints and behaviour (every service)
-
-- `GET /healthz` (liveness) and `GET /readyz` (readiness).
-- `GET /debug/request` (and any method on `/debug/request/{path}`) echoes back: method, full path, query string, all request headers, client address, service name, and service version. This is essential for verifying gateway transformations.
-- Every response includes headers `x-service-name`, `x-service-version` and `x-instance-id` (the container hostname, so replicas of the same service can be told apart).
-- Env var `APP_VERSION` (default `v1`) is reported in responses. orders-service must behave visibly differently in `v2` (e.g. a `"version": "v2"` field and an extra field `"recommendations": []`).
-- Fault injection for later resilience tests, controlled by query params on any endpoint: `?delay_ms=500` adds latency, `?fail=503` returns that status, and env var `FAIL_RATE` (0.0 to 1.0) makes a random fraction of requests return 503.
-- Propagate `x-request-id` to downstream calls if present.
-- Optional but nice: `GET /metrics` in Prometheus format via prometheus-fastapi-instrumentator.
-
-### Repository layout
-
-```
-envoy-demo/
-  services/
-    auth/  blog/  newsletter/  orders/  inventory/  pricing/
-    frontend/                 # one static page, plain HTML and vanilla JS, served by nginx
-  docker-compose.yml          # services only, no proxy yet
-  keys/                       # created by make keys, git-ignored: JWT private key and public jwks.json
-  k8s/
-    base/                     # kustomize: namespace envoy-demo, Deployments, ClusterIP Services, JWT key Secret, JWKS ConfigMap
-    overlays/dev/
-  scripts/
-    smoke.sh                  # curls every service directly
-    auth-contract-test.sh     # checks any auth service (base URL argument) against the auth contract
-    auth-flow.sh              # register a test user, log in, print the token, call a protected endpoint with it
-    load.sh                   # loop N requests to a URL (optional TOKEN env var sent as a bearer token), print status code counts
-    distribution.sh           # loop N requests (optional TOKEN), count values of a response header (default x-service-version)
-  Makefile                    # build, up, down, test, keys, k8s-apply
-  README.md
-```
-
-### Kubernetes requirements
-
-- Namespace `envoy-demo`. Each service: Deployment (1 replica, requests 50m CPU / 64Mi, limits 200m / 128Mi), ClusterIP Service, readiness and liveness probes.
-- orders-service gets two Deployments, `orders-v1` and `orders-v2`, each with its own Service (`orders-v1`, `orders-v2`), plus labels `app=orders, version=v1|v2`.
-- No Ingress, no LoadBalancer, no NetworkPolicy, no gateway resources.
-- Images pushed to a configurable registry (variable in Makefile).
-
-* auth-service reads its signing key from a Kubernetes Secret mounted at the path in `JWT_PRIVATE_KEY_PATH`. `make keys` also prepares a ConfigMap `auth-jwks` with the public key set, so the gateway can verify tokens without calling auth-service.
-* Any service can be scaled to several replicas; the load balancing stretch goal scales orders-v1 to 3.
-
-### Acceptance criteria
-
-- `make up` starts all services in Docker Compose; `scripts/smoke.sh` passes.
-- orders → inventory → pricing call chain works in Compose and in Kubernetes.
-- `/debug/request` echoes headers correctly.
-- pytest unit tests per service pass (`make test`).
-- README explains how to run locally and on Kubernetes.
-
-* `scripts/auth-contract-test.sh http://localhost:8006` passes: register, duplicate register (409), login, wrong password (401), the required claims are present, the token verifies against `keys/jwks.json`, and `/me`, `/docs` and `/.well-known/jwks.json` all return 404.
-* `scripts/auth-flow.sh` registers a user, logs in and prints a token.
-* The frontend opens at http://localhost:8080 and renders its panels and the login and register form; its API calls only work once the gateway exists (Day 2).
+In short: six small FastAPI services (blog, newsletter, orders deployed as v1 and v2, inventory, pricing, auth) plus a static nginx frontend, all in Docker Compose and on Kubernetes (namespace `envoy-demo`), with no gateway configuration. auth-service issues RS256 JWTs whose public keys reach the gateway out of band (`keys/jwks.json` and the `auth-jwks` ConfigMap). orders-service trusts only `x-user-id` and `x-user-email`. Every service except auth echoes requests at `/debug/request` and supports fault injection. The spec's gateway path map (section 4) is the reference for the public paths used throughout Phase 2.
 
 ## Phase 2: The 14-day plan
 
@@ -182,7 +59,7 @@ Each day: goal, what to learn, what the AI generates, your blanks, and how you k
 
 Every day opens with a **Read first** list: read those pages before touching any config. Links point to the "latest" docs; once you pin versions, switch to the matching version in the docs' version picker. If a page has moved, search its title in the docs sidebar.
 
-From Day 6 on, orders needs a login. `scripts/auth-flow.sh` registers a test user, logs in and prints a token; `load.sh` and `distribution.sh` send it as a bearer token when you set the `TOKEN` environment variable. In the browser, the frontend does the same: it shows the login form as soon as orders answers 401.
+From Day 3 to Day 5, orders-service itself answers 401 unless you send `x-user-id` and `x-user-email` yourself (curl `-H`). From Day 6 on, orders needs a login. `scripts/auth-flow.sh` (built in Phase 1) registers a test user, logs in and prints a token; `load.sh` and `distribution.sh` send it as a bearer token when you set the `TOKEN` environment variable. In the browser, the frontend does the same: it shows the login form as soon as orders answers 401.
 
 ### Day 1: Foundations
 
@@ -224,7 +101,7 @@ From Day 6 on, orders needs a login. `scripts/auth-flow.sh` registers a test use
 2. [Route components reference](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/route/v3/route_components.proto) (30 min, only VirtualHost, RouteMatch, RouteAction's `prefix_rewrite` and `regex_rewrite`, and DirectResponseAction)
 
 - **Learn:** prefix vs path vs safe\_regex matching, route ordering, `prefix_rewrite` and `regex_rewrite`, virtual hosts by Host header, `direct_response` for a custom 404.
-- **AI generates:** routes for orders (`/api/orders` → `/orders`), a host-based virtual host example, a catch-all 404.
+- **AI generates:** routes for orders (`/api/orders` → `/orders`), a host-based virtual host example, a catch-all 404 (which means narrowing the Day 2 frontend route to exact `/` plus prefix `/assets/`).
 - **Your blanks:** a regex rewrite (e.g. `/api/v1/orders/123` → `/orders/123`) and the correct ordering of two overlapping routes.
 - **Done when:** `/debug/request` shows the rewritten path the upstream actually received.
 
@@ -264,7 +141,7 @@ From Day 6 on, orders needs a login. `scripts/auth-flow.sh` registers a test use
 4. [OAuth2 filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/oauth2_filter) (15 min, concept only)
 
 - **Learn:** the `jwt_authn` filter: providers, local JWKS (a file mounted into Envoy, since auth-service serves no JWKS endpoint) versus remote JWKS, `rules` per route, `claim_to_headers`. The flow: the frontend registers and logs in through Envoy (public routes), receives a token, then sends it as `Authorization: Bearer ...` on every call to protected routes. Read about the `oauth2` filter conceptually only.
-- **AI generates:** exact-path routes and a cluster for `/auth/register` and `/auth/login` to the auth-service (the `/auth` prefix stripped), `scripts/auth-flow.sh`, and the `jwt_authn` provider reading `keys/jwks.json`.
+- **AI generates:** exact-path routes and a cluster for `/auth/register` and `/auth/login` to the auth-service (the `/auth` prefix stripped), and the `jwt_authn` provider reading `keys/jwks.json` (mounted into Envoy). `scripts/auth-flow.sh` from Phase 1 now runs end to end through Envoy.
 - **Your blanks:** the `rules` section so `/`, `/blog`, `/unsubscribe`, `/auth/register` and `/auth/login` stay open while `/api/orders` requires a valid token; map the `sub` and `email` claims to `x-user-id` and `x-user-email`.
 - **Done when:** in the browser, opening Orders shows the login and register form (the 401), and after registering and logging in the orders panel loads. With curl, orders returns 401 without a token or with a garbage token and 200 with a valid one, and a request carrying a forged `x-user-id` header plus a valid token still comes back with the token's `user_id` in the orders response.
 
@@ -277,7 +154,7 @@ From Day 6 on, orders needs a login. `scripts/auth-flow.sh` registers a test use
 3. [Traffic shifting and splitting](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/traffic_splitting) (20 min, weighted clusters)
 
 - **Learn:** `local_ratelimit` (token bucket, per-route), the idea of global rate limiting with an external service and Redis (read only), `weighted_clusters` and header-based route matching.
-- **AI generates:** orders-v1 and orders-v2 in Compose, the local rate limit filter (with a tight limit on /auth/login to slow down password guessing), weighted cluster scaffolding.
+- **AI generates:** clusters for the existing orders-v1 and orders-v2 Compose services, the local rate limit filter (with a tight limit on /auth/login to slow down password guessing), weighted cluster scaffolding.
 - **Your blanks:** token bucket numbers (e.g. 5 requests per 10 seconds on `/unsubscribe`), the 90/10 weights, and a route that sends `x-canary: true` straight to v2.
 - **Done when:** `scripts/load.sh` shows 429s past the limit, and `scripts/distribution.sh` shows roughly 90/10.
 - **Review:** write half a page in your own words on what each config block does. Commit week one as a tag.
@@ -334,7 +211,7 @@ From Day 6 on, orders needs a login. `scripts/auth-flow.sh` registers a test use
 3. Your Day 6 notes and `scripts/auth-flow.sh` (10 min)
 
 - **Learn:** SecurityPolicy `jwt`: providers, `localJWKS` (key set from the `auth-jwks` ConfigMap, the right fit because auth-service serves no JWKS) versus `remoteJWKS` (an HTTPS URI or a Backend resource, what a replacement like Keycloak would use), `claimToHeaders`, and attaching a policy to a specific route. Only the orders route gets the policy; the register and login routes carry none.
-- **AI generates:** a SecurityPolicy skeleton that reads the `auth-jwks` ConfigMap, with issuer and audience matching the auth-service config, and the frontend base URL set to your gateway hostname.
+- **AI generates:** a SecurityPolicy skeleton that reads the `auth-jwks` ConfigMap, with issuer and audience matching the auth-service config. The frontend needs no change: it uses same-origin URLs by default.
 - **Your blanks:** the SecurityPolicy `targetRefs` (orders only) and the claim-to-header mapping.
 - **Done when:** on your hostname, the frontend loads, Orders shows the login and register form, and after registering and logging in the orders panel loads. With curl, orders returns 401 without a token and 200 with one; blog, unsubscribe, register and login stay open; orders-service sees `x-user-id` and `x-user-email` from the token; and after restarting the auth-service pod, an unexpired token still works.
 - **Optional:** if time remains, run `scripts/auth-contract-test.sh` against a second implementation (a stub, or Keycloak behind a small adapter) and check that only the JWKS setting in the SecurityPolicy has to change.
