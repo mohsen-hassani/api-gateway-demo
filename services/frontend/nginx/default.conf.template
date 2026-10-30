@@ -1,0 +1,46 @@
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+
+    # Not inherited by locations that define their own add_header, so none of them do.
+    add_header x-service-name frontend always;
+    add_header x-service-version "${APP_VERSION}" always;
+    add_header x-instance-id $hostname always;
+
+    # Only "/" and "/assets/" are public (spec section 4).
+    location = / {
+        try_files /index.html =404;
+    }
+
+    location = /index.html {
+        internal;
+    }
+
+    # Written at container start from API_BASE_URL by 40-config-js.sh.
+    location = /assets/config.js {
+        alias /tmp/config.js;
+        default_type application/javascript;
+        expires -1;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+    }
+
+    location = /healthz {
+        default_type application/json;
+        return 200 '{"status":"ok"}\n';
+    }
+
+    location = /readyz {
+        default_type application/json;
+        return 200 '{"status":"ready"}\n';
+    }
+
+    location / {
+        default_type application/json;
+        return 404 '{"error":"not_found","message":"Not found"}\n';
+    }
+}

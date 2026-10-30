@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: envoy-demo
+
+resources:
+  - namespace.yaml
+  - frontend.yaml
+  - blog-service.yaml
+  - newsletter-service.yaml
+  - orders-v1.yaml
+  - orders-v2.yaml
+  - inventory-service.yaml
+  - pricing-service.yaml
+  - auth-service.yaml
+
+# The gateway refers to the ConfigMap by its exact name (Day 11 SecurityPolicy), and kustomize
+# cannot rewrite names inside custom resources, so no hash suffix.
+generatorOptions:
+  disableNameSuffixHash: true
+
+# Both read the copies that `make keys` places in k8s/base/keys/ (git-ignored).
+secretGenerator:
+  - name: auth-jwt-key
+    files:
+      - jwt-private.pem=keys/jwt-private.pem
+
+configMapGenerator:
+  - name: auth-jwks
+    files:
+      - jwks.json=keys/jwks.json

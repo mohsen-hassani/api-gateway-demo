@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Envoy Gateway Demo</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Envoy Gateway Demo</h1>
+    <div class="session">
+      <span id="session-state" class="muted">Not logged in</span>
+      <button id="login-button" type="button">Log in</button>
+      <button id="logout-button" type="button" hidden>Log out</button>
+    </div>
+  </header>
+
+  <div id="auth-top" class="auth-slot"></div>
+
+  <main class="grid">
+    <section id="blog-panel" class="panel">
+      <h2>Blog <small>public</small></h2>
+      <div class="panel-body">
+        <ul id="post-list" class="plain"></ul>
+        <article id="post-detail" class="detail" hidden></article>
+        <p class="status" id="blog-status"></p>
+      </div>
+    </section>
+
+    <section id="newsletter-panel" class="panel">
+      <h2>Newsletter <small>public</small></h2>
+      <div class="panel-body">
+        <form id="unsubscribe-form">
+          <label>Email address
+            <input id="unsubscribe-email" type="email" required autocomplete="email" placeholder="you@example.com">
+          </label>
+          <button type="submit">Unsubscribe</button>
+        </form>
+        <p class="status" id="newsletter-status"></p>
+      </div>
+    </section>
+
+    <section id="orders-panel" class="panel">
+      <h2>Orders <small>login required</small></h2>
+      <div class="panel-body">
+        <div class="row">
+          <button id="orders-refresh" type="button">Refresh</button>
+        </div>
+        <form id="order-form" class="row">
+          <label>SKU
+            <select id="order-sku">
+              <option>SKU-001</option><option>SKU-002</option><option>SKU-003</option>
+              <option>SKU-004</option><option>SKU-005</option>
+            </select>
+          </label>
+          <label>Quantity
+            <input id="order-quantity" type="number" min="1" max="10" value="1" required>
+          </label>
+          <button type="submit">Place order</button>
+        </form>
+        <dl id="orders-meta" class="meta" hidden></dl>
+        <ul id="order-list" class="plain"></ul>
+        <p class="status" id="orders-status"></p>
+      </div>
+      <div class="auth-slot" id="auth-orders"></div>
+    </section>
+  </main>
+
+  <section id="debug-panel" class="panel debug">
+    <h2>Last request</h2>
+    <p id="debug-summary" class="muted">Nothing sent yet.</p>
+    <div class="debug-columns">
+      <div><h3>Response headers</h3><pre id="debug-headers"></pre></div>
+      <div><h3>Body (start)</h3><pre id="debug-body"></pre></div>
+    </div>
+  </section>
+
+  <form id="auth-form" hidden>
+    <h3>Log in or register</h3>
+    <label>Email
+      <input id="auth-email" type="email" required autocomplete="username">
+    </label>
+    <label>Password
+      <input id="auth-password" type="password" required autocomplete="current-password">
+    </label>
+    <div class="row">
+      <button type="submit" id="auth-login">Log in</button>
+      <button type="button" id="auth-register">Register</button>
+      <button type="button" id="auth-cancel" class="secondary">Cancel</button>
+    </div>
+    <p class="status" id="auth-status"></p>
+  </form>
+
+  <script src="/assets/config.js"></script>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

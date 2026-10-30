@@ -1,0 +1,128 @@
+# Phase 1: services only, no proxy yet. Host ports are bound to 127.0.0.1.
+# Phase 2 adds Envoy on port 10000 as the way in.
+x-service: &service
+  restart: unless-stopped
+
+x-healthcheck: &healthcheck
+  interval: 5s
+  timeout: 3s
+  retries: 10
+  start_period: 5s
+
+services:
+  blog-service:
+    <<: *service
+    image: ${REGISTRY:-localhost}/envoy-demo-blog:${TAG:-dev}
+    build:
+      context: ./services
+      dockerfile: blog/Dockerfile
+    ports:
+      - "127.0.0.1:8001:8001"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=2)"]
+
+  newsletter-service:
+    <<: *service
+    image: ${REGISTRY:-localhost}/envoy-demo-newsletter:${TAG:-dev}
+    build:
+      context: ./services
+      dockerfile: newsletter/Dockerfile
+    ports:
+      - "127.0.0.1:8002:8002"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/healthz', timeout=2)"]
+
+  orders-v1:
+    <<: *service
+    image: ${REGISTRY:-localhost}/envoy-demo-orders:${TAG:-dev}
+    build:
+      context: ./services
+      dockerfile: orders/Dockerfile
+    ports:
+      - "127.0.0.1:8003:8003"
+    environment:
+      APP_VERSION: v1
+      INVENTORY_URL: http://inventory-service:8004
+      UPSTREAM_TIMEOUT_SECONDS: "2"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/healthz', timeout=2)"]
+
+  orders-v2:
+    <<: *service
+    image: ${REGISTRY:-localhost}/envoy-demo-orders:${TAG:-dev}
+    build:
+      context: ./services
+      dockerfile: orders/Dockerfile
+    ports:
+      - "127.0.0.1:8013:8003"
+    environment:
+      APP_VERSION: v2
+      INVENTORY_URL: http://inventory-service:8004
+      UPSTREAM_TIMEOUT_SECONDS: "2"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/healthz', timeout=2)"]
+
+  inventory-service:
+    <<: *service
+    image: ${REGISTRY:-localhost}/envoy-demo-inventory:${TAG:-dev}
+    build:
+      context: ./services
+      dockerfile: inventory/Dockerfile
+    ports:
+      - "127.0.0.1:8004:8004"
+    environment:
+      PRICING_URL: http://pricing-service:8005
+      UPSTREAM_TIMEOUT_SECONDS: "2"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/healthz', timeout=2)"]
+
+  pricing-service:
+    <<: *service
+    image: ${REGISTRY:-localhost}/envoy-demo-pricing:${TAG:-dev}
+    build:
+      context: ./services
+      dockerfile: pricing/Dockerfile
+    ports:
+      - "127.0.0.1:8005:8005"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/healthz', timeout=2)"]
+
+  auth-service:
+    <<: *service
+    image: ${REGISTRY:-localhost}/envoy-demo-auth:${TAG:-dev}
+    build:
+      context: ./services
+      dockerfile: auth/Dockerfile
+    ports:
+      - "127.0.0.1:8006:8006"
+    environment:
+      JWT_PRIVATE_KEY_PATH: /keys/jwt-private.pem
+      JWT_ISSUER: http://auth-service
+      JWT_AUDIENCE: envoy-demo
+      TOKEN_TTL_SECONDS: "900"
+    volumes:
+      - ./keys:/keys:ro
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/healthz', timeout=2)"]
+
+  frontend:
+    <<: *service
+    image: ${REGISTRY:-localhost}/envoy-demo-frontend:${TAG:-dev}
+    build:
+      context: ./services
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Empty means same origin, which is right once the gateway serves page and API.
+      API_BASE_URL: "${API_BASE_URL:-}"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]

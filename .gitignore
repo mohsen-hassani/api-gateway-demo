@@ -1,0 +1,12 @@
+# Dev signing keys, created by `make keys`
+keys/
+k8s/base/keys/
+
+# Temporary overlay written by `make k8s-apply`
+k8s/overlays/.apply-*/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
