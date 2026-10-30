@@ -7,6 +7,10 @@ from .errors import ApiError
 # Tests replace this with an httpx.MockTransport.
 TRANSPORT: httpx.AsyncBaseTransport | None = None
 
+# Building an SSL context is slow, and a client is created per call (a shared client breaks
+# across event loops), so build it once.
+_SSL_CONTEXT = httpx.create_ssl_context()
+
 
 async def get(base_url: str, path: str, *, timeout: float) -> httpx.Response:
     """GET base_url+path, forwarding the request id. Raises ApiError(502) if the
@@ -14,7 +18,7 @@ async def get(base_url: str, path: str, *, timeout: float) -> httpx.Response:
     url = base_url.rstrip("/") + path
     headers = {"x-request-id": jlog.request_id_var.get()}
     try:
-        async with httpx.AsyncClient(transport=TRANSPORT, timeout=timeout) as client:
+        async with httpx.AsyncClient(transport=TRANSPORT, timeout=timeout, verify=_SSL_CONTEXT) as client:
             response = await client.get(url, headers=headers)
     except httpx.HTTPError as exc:
         jlog.log("warning", event="upstream_failure", upstream=url, error=type(exc).__name__)
