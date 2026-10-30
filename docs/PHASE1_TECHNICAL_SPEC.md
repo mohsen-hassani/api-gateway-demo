@@ -317,6 +317,7 @@ api-gateway-demo/
   docs/
     ROADMAP.md
     PHASE1_TECHNICAL_SPEC.md
+    phase2/                   # one file per Phase 2 day (dayNN_*.md)
   services/
     common/                   # shared Python: logging, request ids, headers, errors, debug echo, faults, seed data
     auth/  blog/  newsletter/  orders/  inventory/  pricing/
